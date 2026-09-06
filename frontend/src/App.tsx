@@ -133,7 +133,7 @@ export default function App() {
           editingId === note.id ? (
             <form
               key={note.id}
-              className="panel"
+              style={{ flexWrap: "wrap" }}
               onSubmit={(e) => {
                 e.preventDefault();
                 void onSaveEdit(note.id);
@@ -156,7 +156,9 @@ export default function App() {
             <div key={note.id} className="panel">
               <h2>{note.title}</h2>
               <p className="reply">{note.body}</p>
-              <button onClick={() => startEdit(note)}>Edit</button>
+              <button onClick={() => startEdit(note)} style={{ marginRight: "0.5rem" }}>
+                Edit
+              </button>
               <button onClick={() => onDelete(note.id)} disabled={busy}>
                 Delete
               </button>
@@ -164,7 +166,6 @@ export default function App() {
           )
         )}
       </section>
-
       {error && <p className="error">{error}</p>}
 
       <footer>served from the chain · post-quantum certified · Thebes</footer>
