@@ -47,6 +47,7 @@ persistent actor Backend {
 
 import Map "mo:core/Map";
 import Nat "mo:core/Nat";
+import Text "mo:core/Text";
 
 persistent actor Backend {
 
@@ -57,7 +58,19 @@ persistent actor Backend {
   };
 
   var nextId : Nat = 0;
-  let notes = Map.empty<Nat, Note>();
+  let shelves = Map.empty<Text, Map.Map<Nat, Note>>();
+
+  // Get owner's shelf, creating an empty one on first use.
+  func shelfOrNew(owner : Text) : Map.Map<Nat, Note> {
+    switch (Map.get(shelves, Text.compare, owner)) {
+      case (?s) { s };
+      case null {
+        let s = Map.empty<Nat, Note>();
+        Map.add(shelves, Text.compare, owner, s);
+        s
+      };
+    }
+  };
 
   func noteToJson(n : Note) : Text {
     "{\"id\":" # Nat.toText(n.id) #
@@ -65,45 +78,61 @@ persistent actor Backend {
     ",\"body\":\"" # n.body # "\"}"
   };
 
-  // update — creates a note
-  public func add(title : Text, body : Text) : async Nat {
+  // update — creates a note on `owner`'s shelf
+  public func add(owner : Text, title : Text, body : Text) : async Nat {
     let id = nextId;
     nextId += 1;
-    Map.add(notes, Nat.compare, id, { id; title; body });
+    Map.add(shelfOrNew(owner), Nat.compare, id, { id; title; body });
     id
   };
 
-  // query — returns ALL notes as one JSON-array string
-  public query func list() : async Text {
-    var out = "[";
-    var first = true;
-    for (n in Map.values(notes)) {
-      if (not first) { out #= "," };
-      out #= noteToJson(n);
-      first := false;
-    };
-    out # "]"
-  };
-
-  // update — edits an existing note
-  public func edit(id : Nat, title : Text, body : Text) : async Bool {
-    switch (Map.get(notes, Nat.compare, id)) {
-      case (?_existing) {
-        Map.add(notes, Nat.compare, id, { id; title; body });
-        true
+  // query — returns only `owner`'s notes as JSON. No shelf yet is not
+  // an error — they simply have no notes.
+  public query func list(owner : Text) : async Text {
+    switch (Map.get(shelves, Text.compare, owner)) {
+      case null { "[]" };
+      case (?s) {
+        var out = "[";
+        var first = true;
+        for (n in Map.values(s)) {
+          if (not first) { out #= "," };
+          out #= noteToJson(n);
+          first := false;
+        };
+        out # "]"
       };
-      case null { false };
     }
   };
 
-  // update — deletes a note
-  public func remove(id : Nat) : async Bool {
-    switch (Map.get(notes, Nat.compare, id)) {
-      case (?_existing) {
-        Map.remove(notes, Nat.compare, id);
-        true
-      };
+  // update — edits a note, only if it exists on `owner`'s shelf
+  public func edit(owner : Text, id : Nat, title : Text, body : Text) : async Bool {
+    switch (Map.get(shelves, Text.compare, owner)) {
       case null { false };
+      case (?s) {
+        switch (Map.get(s, Nat.compare, id)) {
+          case (?_existing) {
+            Map.add(s, Nat.compare, id, { id; title; body });
+            true
+          };
+          case null { false };
+        }
+      };
+    }
+  };
+
+  // update — deletes a note, only if it exists on `owner`'s shelf
+  public func remove(owner : Text, id : Nat) : async Bool {
+    switch (Map.get(shelves, Text.compare, owner)) {
+      case null { false };
+      case (?s) {
+        switch (Map.get(s, Nat.compare, id)) {
+          case (?_existing) {
+            Map.remove(s, Nat.compare, id);
+            true
+          };
+          case null { false };
+        }
+      };
     }
   };
 };

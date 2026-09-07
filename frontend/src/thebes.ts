@@ -155,6 +155,38 @@ export function encodeNatTextText(
   ]);
 }
 
+/// Encode a `(text, text, text)` triple — e.g. add(owner, title, body).
+export function encodeTextTextText(a: string, b: string, c: string): string {
+  return encodeArgs([
+    { kind: "text", value: a },
+    { kind: "text", value: b },
+    { kind: "text", value: c },
+  ]);
+}
+
+/// Encode a `(text, nat)` pair — e.g. remove(owner, id).
+export function encodeTextNat(a: string, n: bigint | number): string {
+  return encodeArgs([
+    { kind: "text", value: a },
+    { kind: "nat", value: n },
+  ]);
+}
+
+/// Encode a `(text, nat, text, text)` — e.g. edit(owner, id, title, body).
+export function encodeTextNatTextText(
+  owner: string,
+  id: bigint | number,
+  a: string,
+  b: string
+): string {
+  return encodeArgs([
+    { kind: "text", value: owner },
+    { kind: "nat", value: id },
+    { kind: "text", value: a },
+    { kind: "text", value: b },
+  ]);
+}
+
 // ─── Candid decode (text | nat | nat64 | bool) ────────────────────────
 
 /// Decode a single-value Candid reply. Supports the primitive returns
