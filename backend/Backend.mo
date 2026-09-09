@@ -55,12 +55,28 @@ persistent actor Backend {
     id : Nat;
     title : Text;
     body : Text;
+    isShared : Bool;
   };
+
+  public type Tip = {
+    from : Text;
+    to : Text;
+    amount : Nat;
+  };
+
+  let STARTING_POINTS : Nat = 100;
 
   var nextId : Nat = 0;
   let shelves = Map.empty<Text, Map.Map<Nat, Note>>();
 
-  // Get owner's shelf, creating an empty one on first use.
+  let balances = Map.empty<Text, Nat>();
+  let joined = Map.empty<Text, Bool>();
+
+  var nextTipId : Nat = 0;
+  let tips = Map.empty<Nat, Tip>();
+
+  // ── helpers ──────────────────────────────────────────────
+
   func shelfOrNew(owner : Text) : Map.Map<Nat, Note> {
     switch (Map.get(shelves, Text.compare, owner)) {
       case (?s) { s };
@@ -72,22 +88,60 @@ persistent actor Backend {
     }
   };
 
+  // Grants the starting points once. Never re-grants — that is why we
+  // track `joined` separately instead of checking balance == 0 (someone
+  // who spent everything would otherwise get another 100).
+  func ensureJoined(owner : Text) {
+    switch (Map.get(joined, Text.compare, owner)) {
+      case (?_) { };
+      case null {
+        Map.add(joined, Text.compare, owner, true);
+        Map.add(balances, Text.compare, owner, STARTING_POINTS);
+      };
+    }
+  };
+
+  func balanceOf(owner : Text) : Nat {
+    switch (Map.get(balances, Text.compare, owner)) {
+      case (?b) { b };
+      case null { 0 };
+    }
+  };
+
+  func boolToText(b : Bool) : Text {
+    if (b) { "true" } else { "false" }
+  };
+
   func noteToJson(n : Note) : Text {
     "{\"id\":" # Nat.toText(n.id) #
+    ",\"title\":\"" # n.title # "\"" #
+    ",\"body\":\"" # n.body # "\"" #
+    ",\"shared\":" # boolToText(n.isShared) # "}"
+  };
+
+  func feedItemToJson(owner : Text, n : Note) : Text {
+    "{\"id\":" # Nat.toText(n.id) #
+    ",\"owner\":\"" # owner # "\"" #
     ",\"title\":\"" # n.title # "\"" #
     ",\"body\":\"" # n.body # "\"}"
   };
 
-  // update — creates a note on `owner`'s shelf
+  func tipToJson(t : Tip) : Text {
+    "{\"from\":\"" # t.from # "\"" #
+    ",\"to\":\"" # t.to # "\"" #
+    ",\"amount\":" # Nat.toText(t.amount) # "}"
+  };
+
+  // ── notes (from Task 1/2) ────────────────────────────────
+
   public func add(owner : Text, title : Text, body : Text) : async Nat {
+    ensureJoined(owner);
     let id = nextId;
     nextId += 1;
-    Map.add(shelfOrNew(owner), Nat.compare, id, { id; title; body });
+    Map.add(shelfOrNew(owner), Nat.compare, id, { id; title; body; isShared = false });
     id
   };
 
-  // query — returns only `owner`'s notes as JSON. No shelf yet is not
-  // an error — they simply have no notes.
   public query func list(owner : Text) : async Text {
     switch (Map.get(shelves, Text.compare, owner)) {
       case null { "[]" };
@@ -104,14 +158,13 @@ persistent actor Backend {
     }
   };
 
-  // update — edits a note, only if it exists on `owner`'s shelf
   public func edit(owner : Text, id : Nat, title : Text, body : Text) : async Bool {
     switch (Map.get(shelves, Text.compare, owner)) {
       case null { false };
       case (?s) {
         switch (Map.get(s, Nat.compare, id)) {
-          case (?_existing) {
-            Map.add(s, Nat.compare, id, { id; title; body });
+          case (?existing) {
+            Map.add(s, Nat.compare, id, { id; title; body; isShared = existing.isShared });
             true
           };
           case null { false };
@@ -120,7 +173,6 @@ persistent actor Backend {
     }
   };
 
-  // update — deletes a note, only if it exists on `owner`'s shelf
   public func remove(owner : Text, id : Nat) : async Bool {
     switch (Map.get(shelves, Text.compare, owner)) {
       case null { false };
@@ -134,5 +186,103 @@ persistent actor Backend {
         }
       };
     }
+  };
+
+  // ── share / unshare (Task 3) ─────────────────────────────
+
+  public func share(owner : Text, id : Nat) : async Bool {
+    switch (Map.get(shelves, Text.compare, owner)) {
+      case null { false };
+      case (?s) {
+        switch (Map.get(s, Nat.compare, id)) {
+          case (?existing) {
+            Map.add(s, Nat.compare, id, { existing with isShared = true });
+            true
+          };
+          case null { false };
+        }
+      };
+    }
+  };
+
+  public func unshare(owner : Text, id : Nat) : async Bool {
+    switch (Map.get(shelves, Text.compare, owner)) {
+      case null { false };
+      case (?s) {
+        switch (Map.get(s, Nat.compare, id)) {
+          case (?existing) {
+            Map.add(s, Nat.compare, id, { existing with isShared = false });
+            true
+          };
+          case null { false };
+        }
+      };
+    }
+  };
+
+  // query — every shared note, from everybody, with its owner attached
+  public query func feed() : async Text {
+    var out = "[";
+    var first = true;
+    for ((owner, s) in Map.entries(shelves)) {
+      for (n in Map.values(s)) {
+        if (n.isShared) {
+          if (not first) { out #= "," };
+          out #= feedItemToJson(owner, n);
+          first := false;
+        };
+      };
+    };
+    out # "]"
+  };
+
+  // ── points ledger (Task 3) ───────────────────────────────
+
+  // Not `query`: the first call for a new owner grants the starting
+  // points, which changes state.
+  public func balance(owner : Text) : async Nat {
+    ensureJoined(owner);
+    balanceOf(owner)
+  };
+
+  public func tip(from : Text, to : Text, amount : Nat) : async Text {
+    ensureJoined(from);
+    ensureJoined(to);
+    if (from == to) { return "You cannot tip yourself" };
+    let fromBal = balanceOf(from);
+    if (fromBal < amount) { return "Not enough points" };
+    Map.add(balances, Text.compare, from, fromBal - amount);
+    Map.add(balances, Text.compare, to, balanceOf(to) + amount);
+    let id = nextTipId;
+    nextTipId += 1;
+    Map.add(tips, Nat.compare, id, { from; to; amount });
+    ""
+  };
+
+  // query — every tip that mentions `owner`, either side
+  public query func tipHistory(owner : Text) : async Text {
+    var out = "[";
+    var first = true;
+    for (t in Map.values(tips)) {
+      if (t.from == owner or t.to == owner) {
+        if (not first) { out #= "," };
+        out #= tipToJson(t);
+        first := false;
+      };
+    };
+    out # "]"
+  };
+
+  // query — bonus: the invariant. sum of all balances must equal
+  // 100 × members, always. Put this in the footer.
+  public query func ledgerSealView() : async Text {
+    var circulation = 0;
+    for (b in Map.values(balances)) { circulation += b };
+    let members = Map.size(joined);
+    let expected = members * STARTING_POINTS;
+    "{\"members\":" # Nat.toText(members) #
+    ",\"circulation\":" # Nat.toText(circulation) #
+    ",\"expected\":" # Nat.toText(expected) #
+    ",\"consistent\":" # boolToText(circulation == expected) # "}"
   };
 };

@@ -187,6 +187,19 @@ export function encodeTextNatTextText(
   ]);
 }
 
+/// Encode a `(text, text, nat)` triple — e.g. tip(from, to, amount).
+export function encodeTextTextNat(
+  a: string,
+  b: string,
+  n: bigint | number
+): string {
+  return encodeArgs([
+    { kind: "text", value: a },
+    { kind: "text", value: b },
+    { kind: "nat", value: n },
+  ]);
+}
+
 // ─── Candid decode (text | nat | nat64 | bool) ────────────────────────
 
 /// Decode a single-value Candid reply. Supports the primitive returns
